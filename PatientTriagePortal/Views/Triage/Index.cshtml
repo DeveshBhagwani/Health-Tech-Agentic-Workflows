@@ -1,0 +1,40 @@
+@model PatientTriagePortal.Models.PatientSymptom
+
+@{
+    ViewData["Title"] = "Symptom Submission";
+}
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card shadow-sm border-0 rounded-3">
+            <div class="card-header bg-white border-bottom-0 pt-4 pb-0">
+                <h2 class="text-center text-primary">Patient Intake Form</h2>
+                <p class="text-muted text-center">Please describe your symptoms, and our AI Triage system will assign you accordingly.</p>
+            </div>
+            <div class="card-body p-4">
+                <form asp-action="Index" method="post">
+                    <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+                    
+                    <div class="mb-3">
+                        <label asp-for="PatientName" class="form-label fw-bold">Full Name</label>
+                        <input asp-for="PatientName" class="form-control form-control-lg" placeholder="John Doe" />
+                        <span asp-validation-for="PatientName" class="text-danger"></span>
+                    </div>
+                    
+                    <div class="mb-4">
+                        <label asp-for="SymptomDescription" class="form-label fw-bold">Describe Your Symptoms</label>
+                        <textarea asp-for="SymptomDescription" class="form-control" rows="5" placeholder="E.g., I have been experiencing severe chest pain and shortness of breath since this morning..."></textarea>
+                        <span asp-validation-for="SymptomDescription" class="text-danger"></span>
+                        <div class="form-text mt-2">
+                            <small class="text-info"><i class="bi bi-robot"></i> <strong>AI Note:</strong> Try words like "chest pain", "fever", "fracture", "stomach", "rash" to see different AI routing.</small>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary btn-lg">Submit to AI Triage</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
