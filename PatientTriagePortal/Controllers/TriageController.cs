@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PatientTriagePortal.Data;
@@ -6,6 +7,7 @@ using PatientTriagePortal.Services;
 
 namespace PatientTriagePortal.Controllers;
 
+[Authorize]
 public class TriageController : Controller
 {
     private readonly AppDbContext _context;
@@ -34,7 +36,7 @@ public class TriageController : Controller
             _logger.LogInformation("New symptom submission received for patient: {PatientName}", model.PatientName);
 
             // Simulate Agentic AI response
-            var triageResult = _aiService.EvaluateSymptoms(model.SymptomDescription);
+            var triageResult = await _aiService.EvaluateSymptomsAsync(model.SymptomDescription);
             
             model.TriageLevel = triageResult.TriageLevel;
             model.SuggestedDepartment = triageResult.Department;
@@ -51,6 +53,7 @@ public class TriageController : Controller
     }
 
     [HttpGet]
+    [Authorize(Roles = "Doctor")]
     public async Task<IActionResult> Dashboard()
     {
         var records = await _context.PatientSymptoms
