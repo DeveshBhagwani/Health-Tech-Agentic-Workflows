@@ -9,6 +9,7 @@ builder.Services.AddEndpointsApiExplorer();
 
 // Add MemoryCache for scalable performance
 builder.Services.AddMemoryCache();
+builder.Services.AddSignalR();
 
 // Add API Versioning
 builder.Services.AddApiVersioning(options =>
@@ -45,6 +46,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseAuthorization();
+
 app.MapControllers();
+app.MapHub<ClinicalTelemetryAPI.Hubs.TelemetryHub>("/telemetryHub");
 
 app.Run();

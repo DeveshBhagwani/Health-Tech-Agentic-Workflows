@@ -4,6 +4,8 @@ using Microsoft.Extensions.Caching.Memory;
 using Asp.Versioning;
 using ClinicalTelemetryAPI.Data;
 using ClinicalTelemetryAPI.Models;
+using ClinicalTelemetryAPI.Hubs;
+using Microsoft.AspNetCore.SignalR;
 
 namespace ClinicalTelemetryAPI.Controllers;
 
@@ -14,11 +16,13 @@ public class TelemetryController : ControllerBase
 {
     private readonly AppDbContext _context;
     private readonly IMemoryCache _cache;
+    private readonly IHubContext<TelemetryHub> _hubContext;
 
-    public TelemetryController(AppDbContext context, IMemoryCache cache)
+    public TelemetryController(AppDbContext context, IMemoryCache cache, IHubContext<TelemetryHub> hubContext)
     {
         _context = context;
         _cache = cache;
+        _hubContext = hubContext;
     }
 
     [HttpPost]
@@ -37,7 +41,38 @@ public class TelemetryController : ControllerBase
         _context.TelemetryReadings.Add(reading);
         await _context.SaveChangesAsync();
 
+        // Broadcast real-time update
+        await _hubContext.Clients.All.SendAsync("ReceiveTelemetryUpdate", reading);
+
         return CreatedAtAction(nameof(GetSummary), new { patientId = reading.PatientId }, reading);
+    }
+
+    [HttpGet("{patientId}")]
+    public async Task<IActionResult> GetReadings(string patientId, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 10, [FromQuery] bool? abnormalVitalsOnly = null)
+    {
+        var query = _context.TelemetryReadings.Where(t => t.PatientId == patientId);
+
+        if (abnormalVitalsOnly == true)
+        {
+            query = query.Where(t => t.HeartRate < 60 || t.HeartRate > 100 || 
+                                     t.BloodPressureSystolic > 130 || t.BloodPressureDiastolic > 80);
+        }
+
+        var totalRecords = await query.CountAsync();
+        
+        var readings = await query
+            .OrderByDescending(t => t.Timestamp)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return Ok(new 
+        {
+            TotalRecords = totalRecords,
+            PageNumber = pageNumber,
+            PageSize = pageSize,
+            Data = readings
+        });
     }
 
     [HttpGet("{patientId}/summary")]
