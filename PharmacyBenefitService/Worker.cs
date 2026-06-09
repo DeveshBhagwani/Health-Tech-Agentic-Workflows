@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Polly;
+using PharmacyBenefitService.Data;
+using PharmacyBenefitService.Models;
 
 namespace PharmacyBenefitService;
 
@@ -8,29 +10,20 @@ public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IServiceProvider _serviceProvider;
 
-    public Worker(ILogger<Worker> logger, IConfiguration configuration)
+    public Worker(ILogger<Worker> logger, IConfiguration configuration, IServiceProvider serviceProvider)
     {
         _logger = logger;
         _configuration = configuration;
+        _serviceProvider = serviceProvider;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var pendingPrescriptions = new List<Prescription>
-        {
-            new("P101", "Amoxicillin", 25.50m),
-            new("P102", "Humira", 6000.00m),
-            new("P103", "Lisinopril", 15.00m),
-            new("P104", "Oxycodone", 80.00m),
-            new("P105", "Insulin Glargine", 350.00m)
-        };
-
         var apiKey = _configuration["InsuranceAPIKey"];
-        _logger.LogInformation("Pharmacy Benefit Service started. Using API Key: {KeyMask}***. Processing {Count} prescriptions...", 
-            apiKey?.Substring(0, 4), pendingPrescriptions.Count);
+        _logger.LogInformation("Pharmacy Benefit Service started. Using API Key: {KeyMask}***.", apiKey?.Substring(0, 4));
 
-        // Define Polly Retry Policy
         var retryPolicy = Policy
             .Handle<Exception>()
             .WaitAndRetryAsync(3, retryAttempt => 
@@ -39,12 +32,22 @@ public class Worker : BackgroundService
                 return TimeSpan.FromSeconds(2);
             });
 
-        foreach (var prescription in pendingPrescriptions)
+        while (!stoppingToken.IsCancellationRequested)
         {
-            if (stoppingToken.IsCancellationRequested) break;
+            using var scope = _serviceProvider.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<PharmacyDbContext>();
 
-            var jsonInput = JsonSerializer.Serialize(prescription);
-            _logger.LogInformation("Evaluating prescription for Patient: {PatientId}, Medication: {Medication}", prescription.PatientId, prescription.MedicationName);
+            var pendingPrescription = dbContext.PrescriptionQueue.FirstOrDefault();
+
+            if (pendingPrescription == null)
+            {
+                // No items in queue, wait and poll again
+                await Task.Delay(5000, stoppingToken);
+                continue;
+            }
+
+            var jsonInput = JsonSerializer.Serialize(pendingPrescription);
+            _logger.LogInformation("Evaluating prescription for Patient: {PatientId}, Medication: {Medication}", pendingPrescription.PatientId, pendingPrescription.MedicationName);
 
             try
             {
@@ -54,18 +57,42 @@ public class Worker : BackgroundService
                 {
                     var result = JsonSerializer.Deserialize<ApprovalResult>(pythonResult);
                     _logger.LogInformation("Result: {Status} | Reason: {Reason}", result?.Status, result?.Reason);
+
+                    // Audit Logging
+                    dbContext.ClaimsAudits.Add(new ClaimsAudit
+                    {
+                        PatientId = pendingPrescription.PatientId,
+                        MedicationName = pendingPrescription.MedicationName,
+                        Cost = pendingPrescription.Cost,
+                        Status = result?.Status ?? "Unknown",
+                        Reason = result?.Reason ?? "No reason provided",
+                        ProcessedAt = DateTime.UtcNow
+                    });
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error processing prescription after retries.");
+                _logger.LogError(ex, "Error processing prescription after retries. Moving to DLQ.");
+                
+                // Dead Letter Queue
+                dbContext.ManualReviews.Add(new ManualReview
+                {
+                    PatientId = pendingPrescription.PatientId,
+                    MedicationName = pendingPrescription.MedicationName,
+                    Cost = pendingPrescription.Cost,
+                    ErrorReason = ex.Message,
+                    FailedAt = DateTime.UtcNow
+                });
             }
+
+            // Remove from queue in both success and fail scenarios
+            dbContext.PrescriptionQueue.Remove(pendingPrescription);
+            await dbContext.SaveChangesAsync(stoppingToken);
             
-            await Task.Delay(2000, stoppingToken); // Small delay for readability in logs
+            await Task.Delay(2000, stoppingToken); // Small delay for readability
         }
         
-        _logger.LogInformation("Finished processing queue. Shutting down.");
-        Environment.Exit(0);
+        _logger.LogInformation("Pharmacy Benefit Service shutting down.");
     }
 
     private async Task<string> RunPythonEngineAsync(string jsonArgs, CancellationToken cancellationToken)
@@ -100,5 +127,4 @@ public class Worker : BackgroundService
     }
 }
 
-public record Prescription(string PatientId, string MedicationName, decimal Cost);
 public record ApprovalResult(string Status, string Reason);
